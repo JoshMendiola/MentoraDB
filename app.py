@@ -365,6 +365,38 @@ def publish_course(course_id):
     return jsonify({'message': 'Course not found'}), 404
 
 
+@app.route('/api/mentora/courses/enrolled', methods=['GET'])
+@jwt_required()
+def get_enrolled_courses():
+    current_user_id = get_jwt_identity()
+
+    try:
+        # Find all enrollments for the current user
+        enrollments = db.enrollments.find({'student_id': current_user_id})
+        course_ids = [enrollment['course_id'] for enrollment in enrollments]
+
+        # Convert ObjectIds to string for the query
+        course_ids = [ObjectId(id) for id in course_ids]
+
+        # Fetch the enrolled courses
+        courses = list(db.courses.find({'_id': {'$in': course_ids}}))
+
+        # Add progress information from enrollments
+        for course in courses:
+            enrollment = db.enrollments.find_one({
+                'student_id': current_user_id,
+                'course_id': str(course['_id'])
+            })
+            course['progress'] = enrollment.get('progress', 0)
+            course['_id'] = str(course['_id'])
+
+        return jsonify(courses), 200
+
+    except Exception as e:
+        print(f"Error fetching enrolled courses: {e}")
+        return jsonify({'message': 'Error fetching enrolled courses'}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0'
             )
