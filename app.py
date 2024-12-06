@@ -110,15 +110,28 @@ def update_interests():
     if not data or 'interests' not in data:
         return jsonify({'message': 'No interests provided'}), 400
 
-    db.users.update_one(
-        {'_id': ObjectId(current_user_id)},
-        {'$set': {'interests': data['interests']}}
-    )
+    try:
+        interests = data['interests']
+        if not isinstance(interests, list) or not all(isinstance(i, str) for i in interests):
+            return jsonify({'message': 'Invalid interests format'}), 400
 
-    return jsonify({
-        'message': 'Interests updated successfully',
-        'interests': data['interests']
-    }), 200
+        result = db.users.update_one(
+            {'_id': ObjectId(current_user_id)},
+            {'$set': {'interests': interests}}
+        )
+
+        if result.modified_count == 0:
+            return jsonify({'message': 'User not found or interests unchanged'}), 404
+
+        # Return the updated interests
+        return jsonify({
+            'message': 'Interests updated successfully',
+            'interests': interests
+        }), 200
+
+    except Exception as e:
+        print(f"Error updating interests: {e}")
+        return jsonify({'message': 'Server error updating interests'}), 500
 
 
 @app.route('/api/mentora/user', methods=['GET'])
@@ -140,6 +153,46 @@ def get_user():
             'interests': user.get('interests', [])
         }
     }), 200
+
+
+@app.route('/api/mentora/interests', methods=['GET'])
+def get_interests():
+    try:
+        # Get all interests from the interests collection
+        interests = list(db.interests.find({}, {'_id': 0, 'name': 1}))
+        # Convert the cursor to a list of interest names
+        interest_list = [interest['name'] for interest in interests]
+        return jsonify(interest_list), 200
+    except Exception as e:
+        print(f"Error fetching interests: {e}")
+        return jsonify({'message': 'Error fetching interests'}), 500
+
+
+@app.route('/api/mentora/interests/batch', methods=['POST'])
+def add_interests():
+    data = request.get_json()
+
+    if not data or 'interests' not in data:
+        return jsonify({'message': 'No interests provided'}), 400
+
+    try:
+        interests = data['interests']
+        if not isinstance(interests, list) or not all(isinstance(i, str) for i in interests):
+            return jsonify({'message': 'Invalid interests format'}), 400
+
+        # Convert interests to documents
+        interest_docs = [{'name': name} for name in interests]
+
+        # Insert interests, ignore duplicates
+        result = db.interests.insert_many(interest_docs, ordered=False)
+
+        return jsonify({
+            'message': 'Interests added successfully',
+            'added_count': len(result.inserted_ids)
+        }), 201
+    except Exception as e:
+        print(f"Error adding interests: {e}")
+        return jsonify({'message': 'Error adding interests'}), 500
 
 
 if __name__ == '__main__':
