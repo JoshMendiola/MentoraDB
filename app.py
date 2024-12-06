@@ -195,6 +195,19 @@ def add_interests():
         return jsonify({'message': 'Error adding interests'}), 500
 
 
+@app.route('/api/mentora/user/interests', methods=['GET'])
+@jwt_required()
+def get_user_interests():
+    current_user_id = get_jwt_identity()
+    user = db.users.find_one({'_id': ObjectId(current_user_id)})
+
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    return jsonify({
+        'interests': user.get('interests', [])
+    }), 200
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0'
             )
