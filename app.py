@@ -115,18 +115,25 @@ def update_interests():
         if not isinstance(interests, list) or not all(isinstance(i, str) for i in interests):
             return jsonify({'message': 'Invalid interests format'}), 400
 
-        result = db.users.update_one(
+        result = db.users.find_one_and_update(
             {'_id': ObjectId(current_user_id)},
-            {'$set': {'interests': interests}}
+            {'$set': {'interests': interests}},
+            return_document=True
         )
 
-        if result.modified_count == 0:
-            return jsonify({'message': 'User not found or interests unchanged'}), 404
+        if not result:
+            return jsonify({'message': 'User not found'}), 404
 
-        # Return the updated interests
         return jsonify({
             'message': 'Interests updated successfully',
-            'interests': interests
+            'user': {
+                'id': str(result['_id']),
+                'username': result['username'],
+                'fullName': result['fullName'],
+                'email': result['email'],
+                'role': result['role'],
+                'interests': result['interests']
+            }
         }), 200
 
     except Exception as e:
