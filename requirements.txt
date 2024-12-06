@@ -1,2 +1,5 @@
-flask
+Flask
+Flask-JWT-Extended
 pymongo
+python-dotenv
+Werkzeug
