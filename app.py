@@ -397,6 +397,95 @@ def get_enrolled_courses():
         return jsonify({'message': 'Error fetching enrolled courses'}), 500
 
 
+@app.route('/api/mentora/courses/recommended', methods=['GET'])
+@jwt_required()
+def get_recommended_courses():
+    current_user_id = get_jwt_identity()
+
+    try:
+        # Get user's interests
+        user = db.users.find_one({'_id': ObjectId(current_user_id)})
+        user_interests = user.get('interests', [])
+
+        # Find published courses that match user's interests
+        courses = list(db.courses.find({
+            'status': 'published',
+            'tags': {'$in': user_interests}
+        }).limit(10))  # Limit to 10 recommendations
+
+        # If not enough courses found, add other popular courses
+        if len(courses) < 10:
+            additional_courses = list(db.courses.find({
+                'status': 'published',
+                '_id': {'$nin': [c['_id'] for c in courses]}
+            }).sort('enrollment_count', -1).limit(10 - len(courses)))
+
+            courses.extend(additional_courses)
+
+        # Convert ObjectIds to strings
+        for course in courses:
+            course['_id'] = str(course['_id'])
+
+            # Get teacher info
+            teacher = db.users.find_one({'_id': ObjectId(course['teacher_id'])})
+            if teacher:
+                course['teacherName'] = teacher['fullName']
+
+        return jsonify(courses), 200
+
+    except Exception as e:
+        print(f"Error fetching recommended courses: {e}")
+        return jsonify({'message': 'Error fetching recommended courses'}), 500
+
+
+@app.route('/api/mentora/courses/<course_id>/enroll', methods=['POST'])
+@jwt_required()
+def enroll_in_course(course_id):
+    current_user_id = get_jwt_identity()
+
+    try:
+        # Check if course exists and is published
+        course = db.courses.find_one({
+            '_id': ObjectId(course_id),
+            'status': 'published'
+        })
+
+        if not course:
+            return jsonify({'message': 'Course not found or not available'}), 404
+
+        # Check if already enrolled
+        existing_enrollment = db.enrollments.find_one({
+            'student_id': current_user_id,
+            'course_id': course_id
+        })
+
+        if existing_enrollment:
+            return jsonify({'message': 'Already enrolled in this course'}), 400
+
+        # Create enrollment
+        enrollment = {
+            'student_id': current_user_id,
+            'course_id': course_id,
+            'enrolled_at': datetime.utcnow(),
+            'progress': 0,
+            'completed_sections': [],
+            'last_accessed': datetime.utcnow()
+        }
+
+        db.enrollments.insert_one(enrollment)
+
+        # Update course enrollment count
+        db.courses.update_one(
+            {'_id': ObjectId(course_id)},
+            {'$inc': {'enrollment_count': 1}}
+        )
+
+        return jsonify({'message': 'Successfully enrolled in course'}), 201
+
+    except Exception as e:
+        print(f"Error enrolling in course: {e}")
+        return jsonify({'message': 'Error enrolling in course'}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0'
             )
