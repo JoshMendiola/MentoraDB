@@ -309,25 +309,21 @@ def update_course(course_id):
 def get_teacher_courses():
     current_user_id = get_jwt_identity()
 
-    # Optional query parameters
-    status = request.args.get('status')
-    category = request.args.get('category')
-
-    # Build query
     query = {'teacher_id': current_user_id}
-    if status:
+    if status := request.args.get('status'):
         query['status'] = status
-    if category:
+    if category := request.args.get('category'):
         query['category'] = category
 
     courses = list(db.courses.find(query))
 
-    # Convert ObjectId to string
+    # Add teacher name to each course
     for course in courses:
+        teacher = db.users.find_one({'_id': ObjectId(course['teacher_id'])})
+        course['teacherName'] = teacher['fullName'] if teacher else None
         course['_id'] = str(course['_id'])
 
     return jsonify(courses), 200
-
 
 @app.route('/api/mentora/courses/<course_id>', methods=['GET'])
 @jwt_required()
