@@ -5,7 +5,7 @@ from flask_jwt_extended import (
 )
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-import datetime
+from datetime import datetime
 import os
 from bson import ObjectId
 from dotenv import load_dotenv
@@ -214,6 +214,7 @@ def get_user_interests():
     return jsonify({
         'interests': user.get('interests', [])
     }), 200
+
 
 @app.route('/api/mentora/courses', methods=['GET'])
 @jwt_required()
