@@ -325,6 +325,7 @@ def get_teacher_courses():
 
     return jsonify(courses), 200
 
+
 @app.route('/api/mentora/courses/<course_id>', methods=['GET'])
 @jwt_required()
 def get_course(course_id):
@@ -338,9 +339,75 @@ def get_course(course_id):
         return jsonify({'message': 'Invalid course ID'}), 400
 
 
-@app.route('/api/mentora/courses/<course_id>/publish', methods=['POST'])
+@app.route('/api/mentora/courses', methods=['POST'])
 @jwt_required()
-def publish_course(course_id):
+def create_course():
+    current_user_id = get_jwt_identity()
+
+    # Verify user is a teacher
+    user = db.users.find_one({'_id': ObjectId(current_user_id)})
+    if not user or user['role'] != 'Teacher':
+        return jsonify({'message': 'Unauthorized - Teachers only'}), 403
+
+    data = request.get_json()
+
+    # Transform incoming sections to match the expected format
+    # Frontend sends UUID strings, backend expects auto-incrementing order
+    if 'sections' in data:
+        transformed_sections = []
+        for idx, section in enumerate(data['sections']):
+            transformed_section = {
+                'title': section['title'],
+                'content': section['content'],
+                'order': idx
+            }
+            transformed_sections.append(transformed_section)
+        data['sections'] = transformed_sections
+
+    # Initialize additional required fields that frontend might not send
+    new_course = {
+        'title': data.get('title', ''),
+        'description': data.get('description', ''),
+        'sections': data.get('sections', []),
+        'difficulty_level': data.get('difficulty_level', 'beginner').lower(),
+        'estimated_hours': data.get('estimated_hours', 0),
+        'prerequisites': data.get('prerequisites', []),
+        'learning_objectives': data.get('learning_objectives', []),
+        'category': data.get('category', ''),
+        'tags': data.get('tags', []),
+        'status': data.get('status', 'draft'),
+        'teacher_id': current_user_id,
+        'created_at': datetime.utcnow(),
+        'updated_at': datetime.utcnow(),
+        'enrollment_count': 0,
+        'completion_count': 0,
+        'average_rating': 0.0,
+        'total_reviews': 0,
+        'current_enrollment': 0,  # Added to match frontend model
+        'rating': "0.0"  # Added to match frontend model
+    }
+
+    try:
+        result = db.courses.insert_one(new_course)
+        new_course['_id'] = str(result.inserted_id)
+
+        # Add teacher name to response
+        teacher = db.users.find_one({'_id': ObjectId(current_user_id)})
+        new_course['teacherName'] = teacher['fullName'] if teacher else None
+
+        return jsonify({
+            'message': 'Course created successfully',
+            'course': new_course
+        }), 201
+
+    except Exception as e:
+        print(f"Error creating course: {e}")
+        return jsonify({'message': 'Error creating course'}), 500
+
+
+@app.route('/api/mentora/courses/<course_id>', methods=['PUT'])
+@jwt_required()
+def update_course(course_id):
     current_user_id = get_jwt_identity()
 
     # Verify user is a teacher and owns the course
@@ -348,17 +415,57 @@ def publish_course(course_id):
     if not course or course['teacher_id'] != current_user_id:
         return jsonify({'message': 'Unauthorized'}), 403
 
-    result = db.courses.find_one_and_update(
-        {'_id': ObjectId(course_id)},
-        {'$set': {'status': 'published', 'updated_at': datetime.utcnow()}},
-        return_document=True
-    )
+    data = request.get_json()
 
-    if result:
-        result['_id'] = str(result['_id'])
-        return jsonify(result), 200
+    # Transform sections if present
+    if 'sections' in data:
+        transformed_sections = []
+        for idx, section in enumerate(data['sections']):
+            transformed_section = {
+                'title': section['title'],
+                'content': section['content'],
+                'order': idx
+            }
+            transformed_sections.append(transformed_section)
+        data['sections'] = transformed_sections
 
-    return jsonify({'message': 'Course not found'}), 404
+    update_data = {
+        'updated_at': datetime.utcnow(),
+        'title': data.get('title', course['title']),
+        'description': data.get('description', course['description']),
+        'sections': data.get('sections', course['sections']),
+        'difficulty_level': data.get('difficulty_level', course['difficulty_level']).lower(),
+        'estimated_hours': data.get('estimated_hours', course['estimated_hours']),
+        'prerequisites': data.get('prerequisites', course['prerequisites']),
+        'learning_objectives': data.get('learning_objectives', course['learning_objectives']),
+        'category': data.get('category', course['category']),
+        'tags': data.get('tags', course['tags']),
+        'status': data.get('status', course['status'])
+    }
+
+    try:
+        result = db.courses.find_one_and_update(
+            {'_id': ObjectId(course_id)},
+            {'$set': update_data},
+            return_document=True
+        )
+
+        if result:
+            result['_id'] = str(result['_id'])
+            # Add teacher name to response
+            teacher = db.users.find_one({'_id': ObjectId(result['teacher_id'])})
+            result['teacherName'] = teacher['fullName'] if teacher else None
+
+            return jsonify({
+                'message': 'Course updated successfully',
+                'course': result
+            }), 200
+
+        return jsonify({'message': 'Course not found'}), 404
+
+    except Exception as e:
+        print(f"Error updating course: {e}")
+        return jsonify({'message': 'Error updating course'}), 500
 
 
 @app.route('/api/mentora/courses/enrolled', methods=['GET'])
@@ -481,6 +588,7 @@ def enroll_in_course(course_id):
     except Exception as e:
         print(f"Error enrolling in course: {e}")
         return jsonify({'message': 'Error enrolling in course'}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0'
