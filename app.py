@@ -22,7 +22,7 @@ app = Flask(__name__)
 
 # JWT Configuration
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(days=int(os.getenv('JWT_TOKEN_EXPIRE_DAYS', '7')))
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_TOKEN_EXPIRE_DAYS', '7')))
 jwt = JWTManager(app)
 
 # MongoDB Connection
