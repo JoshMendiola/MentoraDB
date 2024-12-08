@@ -5,7 +5,7 @@ from flask_jwt_extended import (
 )
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+import datetime
 import os
 from bson import ObjectId
 from dotenv import load_dotenv
@@ -289,8 +289,8 @@ def create_course():
         'tags': data.get('tags', []),
         'status': data.get('status', 'draft'),
         'teacher_id': current_user_id,
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow(),
+        'created_at': datetime.datetime.utcnow(),
+        'updated_at': datetime.datetime.utcnow(),
         'enrollment_count': 0,
         'completion_count': 0,
         'average_rating': 0.0,
@@ -342,7 +342,7 @@ def update_course(course_id):
         data['sections'] = transformed_sections
 
     update_data = {
-        'updated_at': datetime.utcnow(),
+        'updated_at': datetime.datetime.utcnow(),
         'title': data.get('title', course['title']),
         'description': data.get('description', course['description']),
         'sections': data.get('sections', course['sections']),
@@ -481,10 +481,10 @@ def enroll_in_course(course_id):
         enrollment = {
             'student_id': current_user_id,
             'course_id': course_id,
-            'enrolled_at': datetime.utcnow(),
+            'enrolled_at': datetime.datetime.utcnow(),
             'progress': 0,
             'completed_sections': [],
-            'last_accessed': datetime.utcnow()
+            'last_accessed': datetime.datetime.utcnow()
         }
 
         db.enrollments.insert_one(enrollment)
