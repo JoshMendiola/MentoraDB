@@ -14,6 +14,7 @@ from bson import ObjectId
 from flask import jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from pydantic import ValidationError
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -36,6 +37,12 @@ try:
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
 
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 @app.route('/api/mentora/login', methods=['POST'])
 def login():
@@ -278,14 +285,18 @@ def get_course(course_id):
 @jwt_required()
 def create_course():
     current_user_id = get_jwt_identity()
+    logger.info(f"User ID attempting to create course: {current_user_id}")
 
     # Verify user is a teacher
     user = db.users.find_one({'_id': ObjectId(current_user_id)})
+    logger.info(f"Found user: {user}")
     if not user or user['role'] != 'Teacher':
+        logger.warning(f"User role check failed. Role: {user.get('role') if user else 'No user found'}")
         return jsonify({'message': 'Unauthorized - Teachers only'}), 403
 
     try:
         data = request.get_json()
+        logger.info(f"Received course data: {data}")
 
         # Process sections
         if 'sections' in data:
@@ -293,6 +304,7 @@ def create_course():
                 section['id'] = str(ObjectId())
                 section['order'] = idx
                 section['reading_time_minutes'] = section.get('reading_time_minutes', 0)
+            logger.debug(f"Processed sections: {data['sections']}")
 
         # Create new course with all fields from our schema
         new_course = {
@@ -319,15 +331,33 @@ def create_course():
             'average_rating': 0.0,
             'total_reviews': 0
         }
+        logger.debug(f"Created new course object: {new_course}")
 
-        validated_course = Course(**new_course)
+        try:
+            validated_course = Course(**new_course)
+            logger.info("Course validation successful")
+        except Exception as validation_error:
+            logger.error(f"Course validation failed: {validation_error}")
+            raise
 
         # Convert to dict for MongoDB and handle ObjectId
-        course_dict = validated_course.dict()
-        course_dict['_id'] = ObjectId(course_dict.pop('id'))
+        try:
+            course_dict = validated_course.dict()
+            course_dict['_id'] = ObjectId(course_dict.pop('id'))
+            logger.debug(f"Prepared course dict for MongoDB: {course_dict}")
+        except Exception as dict_error:
+            logger.error(f"Error converting course to dict: {dict_error}")
+            raise
 
-        result = db.courses.insert_one(course_dict)
+        try:
+            result = db.courses.insert_one(course_dict)
+            logger.info(f"MongoDB insert result: {result.inserted_id}")
+        except Exception as db_error:
+            logger.error(f"MongoDB insert failed: {db_error}")
+            raise
+
         new_course['id'] = str(result.inserted_id)
+        logger.info(f"Final course object to return: {new_course}")
 
         return jsonify({
             'message': 'Course created successfully',
@@ -335,9 +365,13 @@ def create_course():
         }), 201
 
     except ValidationError as e:
+        logger.error(f"Validation error details: {e.errors()}")
         return jsonify({'message': 'Validation error', 'errors': e.errors()}), 400
     except Exception as e:
-        print(f"Error creating course: {e}")
+        import traceback
+        logger.error(f"Error creating course: {e}")
+        logger.error("Full traceback:")
+        logger.error(traceback.format_exc())
         return jsonify({'message': 'Error creating course'}), 500
 
 
