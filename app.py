@@ -5,7 +5,6 @@ from flask_jwt_extended import (
 )
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-import datetime
 import os
 from bson import ObjectId
 from dotenv import load_dotenv
