@@ -216,26 +216,44 @@ def get_user_interests():
     }), 200
 
 
+from datetime import datetime
+from typing import List, Optional
+from bson import ObjectId
+from flask import jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from pydantic import ValidationError
+
+
 @app.route('/api/mentora/courses', methods=['GET'])
 @jwt_required()
 def get_teacher_courses():
     current_user_id = get_jwt_identity()
 
+    # Build query with optional filters
     query = {'teacher_id': current_user_id}
     if status := request.args.get('status'):
+        if status not in CourseStatus.__members__:
+            return jsonify({'message': 'Invalid status'}), 400
         query['status'] = status
     if category := request.args.get('category'):
         query['category'] = category
 
-    courses = list(db.courses.find(query))
+    try:
+        courses = list(db.courses.find(query))
 
-    # Add teacher name to each course
-    for course in courses:
-        teacher = db.users.find_one({'_id': ObjectId(course['teacher_id'])})
-        course['teacherName'] = teacher['fullName'] if teacher else None
-        course['_id'] = str(course['_id'])
+        # Process each course
+        for course in courses:
+            course['id'] = str(course.pop('_id'))
+            # Convert datetime objects to strings
+            course['created_at'] = course['created_at'].isoformat()
+            course['updated_at'] = course['updated_at'].isoformat()
+            if course.get('published_at'):
+                course['published_at'] = course['published_at'].isoformat()
 
-    return jsonify(courses), 200
+        return jsonify(courses), 200
+    except Exception as e:
+        print(f"Error fetching courses: {e}")
+        return jsonify({'message': 'Error fetching courses'}), 500
 
 
 @app.route('/api/mentora/courses/<course_id>', methods=['GET'])
@@ -243,11 +261,19 @@ def get_teacher_courses():
 def get_course(course_id):
     try:
         course = db.courses.find_one({'_id': ObjectId(course_id)})
-        if course:
-            course['_id'] = str(course['_id'])
-            return jsonify(course), 200
-        return jsonify({'message': 'Course not found'}), 404
+        if not course:
+            return jsonify({'message': 'Course not found'}), 404
+
+        # Process course data
+        course['id'] = str(course.pop('_id'))
+        course['created_at'] = course['created_at'].isoformat()
+        course['updated_at'] = course['updated_at'].isoformat()
+        if course.get('published_at'):
+            course['published_at'] = course['published_at'].isoformat()
+
+        return jsonify(course), 200
     except Exception as e:
+        print(f"Error fetching course: {e}")
         return jsonify({'message': 'Invalid course ID'}), 400
 
 
@@ -261,57 +287,59 @@ def create_course():
     if not user or user['role'] != 'Teacher':
         return jsonify({'message': 'Unauthorized - Teachers only'}), 403
 
-    data = request.get_json()
-
-    # Transform incoming sections to match the expected format
-    # Frontend sends UUID strings, backend expects auto-incrementing order
-    if 'sections' in data:
-        transformed_sections = []
-        for idx, section in enumerate(data['sections']):
-            transformed_section = {
-                'title': section['title'],
-                'content': section['content'],
-                'order': idx
-            }
-            transformed_sections.append(transformed_section)
-        data['sections'] = transformed_sections
-
-    # Initialize additional required fields that frontend might not send
-    new_course = {
-        'title': data.get('title', ''),
-        'description': data.get('description', ''),
-        'sections': data.get('sections', []),
-        'difficulty_level': data.get('difficulty_level', 'beginner').lower(),
-        'estimated_hours': data.get('estimated_hours', 0),
-        'prerequisites': data.get('prerequisites', []),
-        'learning_objectives': data.get('learning_objectives', []),
-        'category': data.get('category', ''),
-        'tags': data.get('tags', []),
-        'status': data.get('status', 'draft'),
-        'teacher_id': current_user_id,
-        'created_at': datetime.datetime.utcnow(),
-        'updated_at': datetime.datetime.utcnow(),
-        'enrollment_count': 0,
-        'completion_count': 0,
-        'average_rating': 0.0,
-        'total_reviews': 0,
-        'current_enrollment': 0,  # Added to match frontend model
-        'rating': "0.0"  # Added to match frontend model
-    }
-
     try:
-        result = db.courses.insert_one(new_course)
-        new_course['_id'] = str(result.inserted_id)
+        data = request.get_json()
 
-        # Add teacher name to response
-        teacher = db.users.find_one({'_id': ObjectId(current_user_id)})
-        new_course['teacherName'] = teacher['fullName'] if teacher else None
+        # Process sections
+        if 'sections' in data:
+            for idx, section in enumerate(data['sections']):
+                section['id'] = str(ObjectId())
+                section['order'] = idx
+                section['reading_time_minutes'] = section.get('reading_time_minutes', 0)
+
+        # Create new course with all fields from our schema
+        new_course = {
+            'id': str(ObjectId()),
+            'title': data['title'],
+            'description': data['description'],
+            'difficulty_level': data.get('difficulty_level', 'beginner').lower(),
+            'estimated_hours': data.get('estimated_hours', 0),
+            'sections': data.get('sections', []),
+            'prerequisites': data.get('prerequisites', []),
+            'learning_objectives': data.get('learning_objectives', []),
+            'category': data['category'],
+            'tags': data.get('tags', []),
+            'status': CourseStatus.DRAFT.value,
+            'teacher_id': current_user_id,
+            'teacher_name': user.get('fullName'),
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+            'published_at': None,
+            'enrolled_students': [],
+            'enrollment_count': 0,
+            'completion_count': 0,
+            'reviews': [],
+            'average_rating': 0.0,
+            'total_reviews': 0
+        }
+
+        # Validate with Pydantic
+        validated_course = Course(**new_course)
+
+        # Convert to dict for MongoDB and handle ObjectId
+        course_dict = validated_course.dict()
+        course_dict['_id'] = ObjectId(course_dict.pop('id'))
+
+        result = db.courses.insert_one(course_dict)
+        new_course['id'] = str(result.inserted_id)
 
         return jsonify({
             'message': 'Course created successfully',
             'course': new_course
         }), 201
 
+    except ValidationError as e:
+        return jsonify({'message': 'Validation error', 'errors': e.errors()}), 400
     except Exception as e:
         print(f"Error creating course: {e}")
         return jsonify({'message': 'Error creating course'}), 500
@@ -322,40 +350,46 @@ def create_course():
 def update_course(course_id):
     current_user_id = get_jwt_identity()
 
-    # Verify user is a teacher and owns the course
-    course = db.courses.find_one({'_id': ObjectId(course_id)})
-    if not course or course['teacher_id'] != current_user_id:
-        return jsonify({'message': 'Unauthorized'}), 403
-
-    data = request.get_json()
-
-    # Transform sections if present
-    if 'sections' in data:
-        transformed_sections = []
-        for idx, section in enumerate(data['sections']):
-            transformed_section = {
-                'title': section['title'],
-                'content': section['content'],
-                'order': idx
-            }
-            transformed_sections.append(transformed_section)
-        data['sections'] = transformed_sections
-
-    update_data = {
-        'updated_at': datetime.datetime.utcnow(),
-        'title': data.get('title', course['title']),
-        'description': data.get('description', course['description']),
-        'sections': data.get('sections', course['sections']),
-        'difficulty_level': data.get('difficulty_level', course['difficulty_level']).lower(),
-        'estimated_hours': data.get('estimated_hours', course['estimated_hours']),
-        'prerequisites': data.get('prerequisites', course['prerequisites']),
-        'learning_objectives': data.get('learning_objectives', course['learning_objectives']),
-        'category': data.get('category', course['category']),
-        'tags': data.get('tags', course['tags']),
-        'status': data.get('status', course['status'])
-    }
-
     try:
+        # Verify user is a teacher and owns the course
+        course = db.courses.find_one({'_id': ObjectId(course_id)})
+        if not course or course['teacher_id'] != current_user_id:
+            return jsonify({'message': 'Unauthorized'}), 403
+
+        data = request.get_json()
+
+        # Process sections if present
+        if 'sections' in data:
+            for idx, section in enumerate(data['sections']):
+                if 'id' not in section:
+                    section['id'] = str(ObjectId())
+                section['order'] = idx
+                section['reading_time_minutes'] = section.get('reading_time_minutes', 0)
+
+        # Prepare update data
+        update_data = {
+            'title': data.get('title', course['title']),
+            'description': data.get('description', course['description']),
+            'sections': data.get('sections', course['sections']),
+            'difficulty_level': data.get('difficulty_level', course['difficulty_level']).lower(),
+            'estimated_hours': data.get('estimated_hours', course['estimated_hours']),
+            'prerequisites': data.get('prerequisites', course['prerequisites']),
+            'learning_objectives': data.get('learning_objectives', course['learning_objectives']),
+            'category': data.get('category', course['category']),
+            'tags': data.get('tags', course['tags']),
+            'updated_at': datetime.utcnow()
+        }
+
+        # If status is being updated to published, set published_at
+        if 'status' in data and data['status'] == CourseStatus.PUBLISHED.value and course[
+            'status'] != CourseStatus.PUBLISHED.value:
+            update_data['published_at'] = datetime.utcnow()
+        update_data['status'] = data.get('status', course['status'])
+
+        # Validate with Pydantic
+        current_course = {**course, **update_data}
+        validated_course = Course(**current_course)
+
         result = db.courses.find_one_and_update(
             {'_id': ObjectId(course_id)},
             {'$set': update_data},
@@ -363,11 +397,7 @@ def update_course(course_id):
         )
 
         if result:
-            result['_id'] = str(result['_id'])
-            # Add teacher name to response
-            teacher = db.users.find_one({'_id': ObjectId(result['teacher_id'])})
-            result['teacherName'] = teacher['fullName'] if teacher else None
-
+            result['id'] = str(result.pop('_id'))
             return jsonify({
                 'message': 'Course updated successfully',
                 'course': result
@@ -375,131 +405,11 @@ def update_course(course_id):
 
         return jsonify({'message': 'Course not found'}), 404
 
+    except ValidationError as e:
+        return jsonify({'message': 'Validation error', 'errors': e.errors()}), 400
     except Exception as e:
         print(f"Error updating course: {e}")
         return jsonify({'message': 'Error updating course'}), 500
-
-
-@app.route('/api/mentora/courses/enrolled', methods=['GET'])
-@jwt_required()
-def get_enrolled_courses():
-    current_user_id = get_jwt_identity()
-
-    try:
-        # Find all enrollments for the current user
-        enrollments = db.enrollments.find({'student_id': current_user_id})
-        course_ids = [enrollment['course_id'] for enrollment in enrollments]
-
-        # Convert ObjectIds to string for the query
-        course_ids = [ObjectId(id) for id in course_ids]
-
-        # Fetch the enrolled courses
-        courses = list(db.courses.find({'_id': {'$in': course_ids}}))
-
-        # Add progress information from enrollments
-        for course in courses:
-            enrollment = db.enrollments.find_one({
-                'student_id': current_user_id,
-                'course_id': str(course['_id'])
-            })
-            course['progress'] = enrollment.get('progress', 0)
-            course['_id'] = str(course['_id'])
-
-        return jsonify(courses), 200
-
-    except Exception as e:
-        print(f"Error fetching enrolled courses: {e}")
-        return jsonify({'message': 'Error fetching enrolled courses'}), 500
-
-
-@app.route('/api/mentora/courses/recommended', methods=['GET'])
-@jwt_required()
-def get_recommended_courses():
-    current_user_id = get_jwt_identity()
-
-    try:
-        # Get user's interests
-        user = db.users.find_one({'_id': ObjectId(current_user_id)})
-        user_interests = user.get('interests', [])
-
-        # Find published courses that match user's interests
-        courses = list(db.courses.find({
-            'status': 'published',
-            'tags': {'$in': user_interests}
-        }).limit(10))  # Limit to 10 recommendations
-
-        # If not enough courses found, add other popular courses
-        if len(courses) < 10:
-            additional_courses = list(db.courses.find({
-                'status': 'published',
-                '_id': {'$nin': [c['_id'] for c in courses]}
-            }).sort('enrollment_count', -1).limit(10 - len(courses)))
-
-            courses.extend(additional_courses)
-
-        # Convert ObjectIds to strings
-        for course in courses:
-            course['_id'] = str(course['_id'])
-
-            # Get teacher info
-            teacher = db.users.find_one({'_id': ObjectId(course['teacher_id'])})
-            if teacher:
-                course['teacherName'] = teacher['fullName']
-
-        return jsonify(courses), 200
-
-    except Exception as e:
-        print(f"Error fetching recommended courses: {e}")
-        return jsonify({'message': 'Error fetching recommended courses'}), 500
-
-
-@app.route('/api/mentora/courses/<course_id>/enroll', methods=['POST'])
-@jwt_required()
-def enroll_in_course(course_id):
-    current_user_id = get_jwt_identity()
-
-    try:
-        # Check if course exists and is published
-        course = db.courses.find_one({
-            '_id': ObjectId(course_id),
-            'status': 'published'
-        })
-
-        if not course:
-            return jsonify({'message': 'Course not found or not available'}), 404
-
-        # Check if already enrolled
-        existing_enrollment = db.enrollments.find_one({
-            'student_id': current_user_id,
-            'course_id': course_id
-        })
-
-        if existing_enrollment:
-            return jsonify({'message': 'Already enrolled in this course'}), 400
-
-        # Create enrollment
-        enrollment = {
-            'student_id': current_user_id,
-            'course_id': course_id,
-            'enrolled_at': datetime.datetime.utcnow(),
-            'progress': 0,
-            'completed_sections': [],
-            'last_accessed': datetime.datetime.utcnow()
-        }
-
-        db.enrollments.insert_one(enrollment)
-
-        # Update course enrollment count
-        db.courses.update_one(
-            {'_id': ObjectId(course_id)},
-            {'$inc': {'enrollment_count': 1}}
-        )
-
-        return jsonify({'message': 'Successfully enrolled in course'}), 201
-
-    except Exception as e:
-        print(f"Error enrolling in course: {e}")
-        return jsonify({'message': 'Error enrolling in course'}), 500
 
 
 if __name__ == '__main__':
