@@ -9,6 +9,12 @@ import datetime
 import os
 from bson import ObjectId
 from dotenv import load_dotenv
+from datetime import datetime
+from typing import List, Optional
+from bson import ObjectId
+from flask import jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from pydantic import ValidationError
 
 # Load environment variables
 load_dotenv()
@@ -216,14 +222,6 @@ def get_user_interests():
     }), 200
 
 
-from datetime import datetime
-from typing import List, Optional
-from bson import ObjectId
-from flask import jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from pydantic import ValidationError
-
-
 @app.route('/api/mentora/courses', methods=['GET'])
 @jwt_required()
 def get_teacher_courses():
@@ -323,7 +321,6 @@ def create_course():
             'total_reviews': 0
         }
 
-        # Validate with Pydantic
         validated_course = Course(**new_course)
 
         # Convert to dict for MongoDB and handle ObjectId
