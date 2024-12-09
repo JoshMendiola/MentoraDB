@@ -300,35 +300,39 @@ def create_course():
         logger.info(f"Received course data: {data}")
 
         # Process sections
-        if 'sections' in data:
-            for idx, section in enumerate(data['sections']):
-                section['id'] = str(ObjectId())
-                section['order'] = idx
-                section['reading_time_minutes'] = section.get('reading_time_minutes', 0)
-            logger.debug(f"Processed sections: {data['sections']}")
+        sections = []
+        for idx, section in enumerate(data.get('sections', [])):
+            sections.append({
+                'id': str(ObjectId()),
+                'title': section.get('title', ''),
+                'content': section.get('content', ''),
+                'order': idx,
+                'reading_time_minutes': section.get('reading_time_minutes', 0)
+            })
+        logger.debug(f"Processed sections: {sections}")
 
         # Create new course with all fields from our schema
         new_course = {
             'id': str(ObjectId()),
             'title': data['title'],
             'description': data['description'],
-            'difficulty_level': data.get('difficulty_level', 'beginner').lower(),
-            'estimated_hours': data.get('estimated_hours', 0),
-            'sections': data.get('sections', []),
+            'difficulty_level': data.get('difficulty_level', 'beginner'),
+            'estimated_hours': data.get('estimated_hours'),
+            'sections': sections,
             'prerequisites': data.get('prerequisites', []),
             'learning_objectives': data.get('learning_objectives', []),
             'category': data['category'],
             'tags': data.get('tags', []),
-            'status': CourseStatus.DRAFT.value,
+            'status': data.get('status', CourseStatus.DRAFT.value),
             'teacher_id': current_user_id,
             'teacher_name': user.get('fullName'),
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
+            'created_at': datetime.utcnow().isoformat(),
+            'updated_at': datetime.utcnow().isoformat(),
             'published_at': None,
             'enrolled_students': [],
             'enrollment_count': 0,
             'completion_count': 0,
-            'current_enrollment': 0,  # Added this field
+            'current_enrollment': 0,
             'reviews': [],
             'average_rating': 0.0,
             'total_reviews': 0
@@ -336,44 +340,23 @@ def create_course():
         logger.debug(f"Created new course object: {new_course}")
 
         try:
-            validated_course = Course(**new_course)
+            course = Course(**new_course)
             logger.info("Course validation successful")
-        except Exception as validation_error:
-            logger.error(f"Course validation failed: {validation_error}")
-            raise
+        except ValidationError as e:
+            logger.error(f"Validation error: {e.errors()}")
+            return jsonify({'message': 'Validation error', 'errors': e.errors()}), 400
 
-        # Convert to dict for MongoDB and handle ObjectId
-        try:
-            course_dict = validated_course.dict()
-            course_dict['_id'] = ObjectId(course_dict.pop('id'))
-            logger.debug(f"Prepared course dict for MongoDB: {course_dict}")
-        except Exception as dict_error:
-            logger.error(f"Error converting course to dict: {dict_error}")
-            raise
-
-        try:
-            result = db.courses.insert_one(course_dict)
-            logger.info(f"MongoDB insert result: {result.inserted_id}")
-        except Exception as db_error:
-            logger.error(f"MongoDB insert failed: {db_error}")
-            raise
-
+        result = db.courses.insert_one(course.dict())
         new_course['id'] = str(result.inserted_id)
-        logger.info(f"Final course object to return: {new_course}")
+        logger.info(f"Inserted course: {new_course}")
 
         return jsonify({
             'message': 'Course created successfully',
             'course': new_course
         }), 201
 
-    except ValidationError as e:
-        logger.error(f"Validation error details: {e.errors()}")
-        return jsonify({'message': 'Validation error', 'errors': e.errors()}), 400
     except Exception as e:
-        import traceback
         logger.error(f"Error creating course: {e}")
-        logger.error("Full traceback:")
-        logger.error(traceback.format_exc())
         return jsonify({'message': 'Error creating course'}), 500
 
 
