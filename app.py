@@ -328,6 +328,7 @@ def create_course():
             'enrolled_students': [],
             'enrollment_count': 0,
             'completion_count': 0,
+            'current_enrollment': 0,  # Added this field
             'reviews': [],
             'average_rating': 0.0,
             'total_reviews': 0
